@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TrustGuard AI — Liveness Verification (Prototype)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root{
+    --ink:#122019;
+    --paper:#f6f4ee;
+    --panel:#ffffff;
+    --line:#dcd6c8;
+    --forest:#1f4d3a;
+    --forest-deep:#123526;
+    --amber:#a9782f;
+    --rust:#a33f2e;
+    --mono: 'IBM Plex Mono', 'Courier New', monospace;
+    --serif: 'Georgia', 'Iowan Old Style', serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--mono);font-size:14px;line-height:1.5;}
+  .wrap{max-width:1040px;margin:0 auto;padding:36px 24px 80px;}
+  header{border-bottom:2px solid var(--ink);padding-bottom:18px;margin-bottom:28px;}
+  .brand{font-family:var(--serif);font-size:28px;}
+  .brand b{color:var(--forest);}
+  .brand-sub{font-size:12px;color:#5c5a4f;margin-top:4px;}
+
+  .grid{display:grid;grid-template-columns:1.1fr 0.9fr;gap:28px;}
+  @media (max-width:820px){.grid{grid-template-columns:1fr;}}
+
+  .panel{background:var(--panel);border:1px solid var(--line);padding:24px;}
+  .panel h2{font-family:var(--serif);font-size:18px;margin:0 0 4px;font-weight:normal;}
+  .panel .hint{font-size:12px;color:#7a7867;margin-bottom:16px;}
+
+  .video-box{position:relative;background:#0d1611;border:1px solid var(--ink);aspect-ratio:4/3;overflow:hidden;}
+  video, canvas{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;}
+  canvas{pointer-events:none;}
+
+  .status-bar{margin-top:14px;font-size:12.5px;padding:10px 12px;border-left:3px solid var(--line);background:#fbfaf6;}
+  .status-bar.ok{border-color:var(--forest);background:#eef4ee;color:var(--forest-deep);}
+  .status-bar.warn{border-color:var(--amber);background:#f8f0e0;color:#6b4c17;}
+  .status-bar.bad{border-color:var(--rust);background:#f7e9e6;color:#7a2c1d;}
+
+  .btnrow{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;}
+  button{font-family:var(--mono);font-size:13px;padding:11px 18px;border:1px solid var(--ink);background:var(--ink);color:var(--paper);cursor:pointer;}
+  button:hover{background:var(--forest-deep);}
+  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line);}
+  button:disabled{opacity:0.4;cursor:not-allowed;}
+
+  .metric-row{display:flex;justify-content:space-between;font-size:12.5px;padding:8px 0;border-bottom:1px dashed var(--line);}
+  .metric-row:last-child{border-bottom:none;}
+  .metric-val{font-weight:bold;}
+
+  .challenge-box{text-align:center;padding:20px 10px;}
+  .challenge-title{font-family:var(--serif);font-size:20px;margin-bottom:6px;}
+  .challenge-progress{font-size:34px;font-family:var(--serif);margin:10px 0;}
+  .blink-dot{display:inline-block;width:14px;height:14px;border-radius:50%;border:1.5px solid var(--ink);margin:0 4px;}
+  .blink-dot.filled{background:var(--forest);border-color:var(--forest);}
+
+  .setup-note{font-size:12px;color:#8a8878;margin-top:18px;border-top:1px solid var(--line);padding-top:14px;}
+  footer{margin-top:30px;font-size:11px;color:#8a8878;text-align:center;}
+  .placeholder{color:#9c9a8c;text-align:center;padding:30px 10px;font-size:13px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><b>TrustGuard</b> AI</div>
+    <div class="brand-sub">Module 2 — Active Liveness Check · catches static photo / replay spoofing during KYC</div>
+  </header>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Camera Feed</h2>
+      <div class="hint">Face landmarks are tracked live in your browser (no video is uploaded anywhere). Grant camera access to begin.</div>
+      <div class="video-box">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+      </div>
+      <div class="status-bar" id="statusBar">Camera not started.</div>
+      <div class="btnrow">
+        <button id="startBtn">Start Camera</button>
+        <button id="challengeBtn" class="ghost" disabled>Start Liveness Challenge</button>
+      </div>
+      <div class="setup-note" id="setupNote">
+        Uses face-api.js (TinyFaceDetector + 68-point landmarks), loaded from a public CDN on first run.
+        If your network blocks the model download, this screen will tell you — the rest of the prototype
+        (bot-detection module) does not depend on this.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Liveness Result</h2>
+      <div id="resultBody">
+        <div class="placeholder">Start the camera, then run the challenge.<br>You'll be asked to blink twice within 6 seconds.</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>TrustGuard AI — Round 2 Proof of Concept · TVS Credit EPIC 8.0 · Passive deepfake-artifact scanning (frame-consistency, lighting analysis) is architected for Round 3; this module demonstrates the active-challenge layer live.</footer>
+</div>
+
+<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script>
+window.addEventListener('load', function(){
+
+  const video = document.getElementById('video');
+  const overlay = document.getElementById('overlay');
+  const ctx = overlay.getContext('2d');
+  const statusBar = document.getElementById('statusBar');
+  const startBtn = document.getElementById('startBtn');
+  const challengeBtn = document.getElementById('challengeBtn');
+  const resultBody = document.getElementById('resultBody');
+  const setupNote = document.getElementById('setupNote');
+
+  let modelsReady = false;
+  let detecting = false;
+  let challengeActive = false;
+  let blinkCount = 0;
+  let eyeWasClosed = false;
+  let challengeTimer = null;
+  let challengeDeadline = 0;
+  const EAR_THRESHOLD = 0.24;
+  const REQUIRED_BLINKS = 2;
+  const CHALLENGE_MS = 6000;
+
+  function setStatus(msg, tier){
+    statusBar.textContent = msg;
+    statusBar.className = 'status-bar' + (tier ? ' '+tier : '');
+  }
+
+  function eyeAspectRatio(pts){
+    // pts: 6 landmark points around one eye, in face-api.js order
+    const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
+    const vertical1 = dist(pts[1], pts[5]);
+    const vertical2 = dist(pts[2], pts[4]);
+    const horizontal = dist(pts[0], pts[3]);
+    return (vertical1 + vertical2) / (2.0 * horizontal);
+  }
+
+  async function loadModels(){
+    setStatus('Loading face-tracking models from CDN…', 'warn');
+    const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model';
+    try{
+      await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+      await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
+      modelsReady = true;
+      setStatus('Models loaded. Click "Start Camera" to begin.', 'ok');
+    }catch(err){
+      setStatus('Could not load face-tracking models (likely a network/CORS restriction in this environment). See note below.', 'bad');
+      setupNote.innerHTML = '<b>Model load failed.</b> This demo needs an internet connection to <code>cdn.jsdelivr.net</code> to fetch the face-landmark model on first run. If you are behind a restrictive network, try opening this file on a normal home/mobile connection, or swap in a locally-hosted copy of the face-api.js model weights for the live jury demo. Error: ' + (err && err.message ? err.message : err);
+    }
+  }
+
+  async function startCamera(){
+    if(!modelsReady) await loadModels();
+    if(!modelsReady) return;
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({video:{width:480,height:360}, audio:false});
+      video.srcObject = stream;
+      await video.play();
+      overlay.width = video.videoWidth || 480;
+      overlay.height = video.videoHeight || 360;
+      setStatus('Camera live. Face tracking running.', 'ok');
+      challengeBtn.disabled = false;
+      startBtn.disabled = true;
+      detecting = true;
+      detectLoop();
+    }catch(err){
+      setStatus('Camera access denied or unavailable: ' + err.message, 'bad');
+    }
+  }
+
+  async function detectLoop(){
+    if(!detecting) return;
+    const options = new faceapi.TinyFaceDetectorOptions({inputSize:224, scoreThreshold:0.5});
+    const result = await faceapi.detectSingleFace(video, options).withFaceLandmarks(true);
+
+    ctx.clearRect(0,0,overlay.width, overlay.height);
+
+    if(result){
+      const landmarks = result.landmarks;
+      const leftEye = landmarks.getLeftEye();
+      const rightEye = landmarks.getRightEye();
+      const earLeft = eyeAspectRatio(leftEye);
+      const earRight = eyeAspectRatio(rightEye);
+      const ear = (earLeft + earRight) / 2;
+
+      // draw landmarks
+      ctx.fillStyle = '#3fae7a';
+      [...leftEye, ...rightEye].forEach(p=>{
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 2, 0, Math.PI*2);
+        ctx.fill();
+      });
+
+      if(challengeActive){
+        const isClosed = ear < EAR_THRESHOLD;
+        if(isClosed && !eyeWasClosed){
+          eyeWasClosed = true;
+        } else if(!isClosed && eyeWasClosed){
+          eyeWasClosed = false;
+          blinkCount++;
+          updateChallengeUI();
+          if(blinkCount >= REQUIRED_BLINKS){
+            finishChallenge(true);
+          }
+        }
+      }
+    } else if(challengeActive){
+      // no face detected during challenge — could be a photo held off-angle, or nobody there
+    }
+
+    requestAnimationFrame(detectLoop);
+  }
+
+  function updateChallengeUI(){
+    let dots = '';
+    for(let i=0;i<REQUIRED_BLINKS;i++){
+      dots += `<span class="blink-dot ${i < blinkCount ? 'filled' : ''}"></span>`;
+    }
+    const remaining = Math.max(0, ((challengeDeadline - performance.now())/1000)).toFixed(1);
+    resultBody.innerHTML = `
+      <div class="challenge-box">
+        <div class="challenge-title">Blink naturally, twice</div>
+        <div class="challenge-progress">${dots}</div>
+        <div style="font-size:12px;color:#7a7867;">${blinkCount} / ${REQUIRED_BLINKS} detected · ${remaining}s remaining</div>
+      </div>
+    `;
+  }
+
+  function finishChallenge(success){
+    challengeActive = false;
+    clearTimeout(challengeTimer);
+    challengeBtn.disabled = false;
+
+    if(success){
+      resultBody.innerHTML = `
+        <div class="challenge-box">
+          <div class="challenge-title" style="color:var(--forest-deep);">Liveness Confirmed</div>
+          <div style="font-size:13px;margin-top:8px;">Real-time blink response detected — consistent with a live human in front of the camera, not a static photo or pre-recorded video.</div>
+        </div>
+        <div class="metric-row"><span>Blinks required</span><span class="metric-val">${REQUIRED_BLINKS}</span></div>
+        <div class="metric-row"><span>Blinks detected</span><span class="metric-val">${blinkCount}</span></div>
+        <div class="metric-row"><span>Result</span><span class="metric-val" style="color:var(--forest);">PASS</span></div>
+      `;
+      setStatus('Liveness check passed.', 'ok');
+    } else {
+      resultBody.innerHTML = `
+        <div class="challenge-box">
+          <div class="challenge-title" style="color:var(--rust);">Liveness Check Failed</div>
+          <div style="font-size:13px;margin-top:8px;">No qualifying blink response within the time window. This is exactly the pattern expected from a held-up photo, paused video, or a face without natural micro-movement.</div>
+        </div>
+        <div class="metric-row"><span>Blinks required</span><span class="metric-val">${REQUIRED_BLINKS}</span></div>
+        <div class="metric-row"><span>Blinks detected</span><span class="metric-val">${blinkCount}</span></div>
+        <div class="metric-row"><span>Result</span><span class="metric-val" style="color:var(--rust);">FAIL — escalate to manual KYC review</span></div>
+      `;
+      setStatus('Liveness check failed — flagged for manual review.', 'bad');
+    }
+  }
+
+  challengeBtn.addEventListener('click', function(){
+    blinkCount = 0;
+    eyeWasClosed = false;
+    challengeActive = true;
+    challengeDeadline = performance.now() + CHALLENGE_MS;
+    challengeBtn.disabled = true;
+    updateChallengeUI();
+    challengeTimer = setTimeout(()=>{ finishChallenge(blinkCount >= REQUIRED_BLINKS); }, CHALLENGE_MS);
+
+    const uiTick = setInterval(()=>{
+      if(!challengeActive){ clearInterval(uiTick); return; }
+      updateChallengeUI();
+    }, 200);
+  });
+
+  startBtn.addEventListener('click', startCamera);
+
+  loadModels();
+});
+</script>
+</body>
+</html>
